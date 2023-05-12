@@ -6,7 +6,14 @@ setwd("/Users/LUIZFERNANANDO/Desktop")
 options(scipen = 9999)
 options(max.print =100000)
 install.packages("readxl")
+install.packages("mfx")
+install.packages("tidyverse")
+install.packages("broom")
+library(tidyverse)
+library(broom)
 library(readxl)
+library(mfx)
+theme_set(theme_classic())
 database <- read_excel("database.xlsx")
 
 # Sumário Estatístico
@@ -30,31 +37,56 @@ pub_op_climate <- as.numeric(pub_op_climate)
 summary(pub_op_climate)
 sd(pub_op_climate)
 
-# Modelo Logístico
+pib_percap <- database$pib_percap
+pib_percap <- as.numeric(pib_percap)
+summary(pib_percap)
+sd(pib_percap)
+
+finance <- data.frame(adap, climate_risk, climi, pub_op_climate, pib_percap)
+
+# Modelo Logístico Principal
+logitmfx(adap ~ climate_risk + climi + pub_op_climate, data = finance)
+
+# Usando Pib per capita
+logitmfx(adap ~ climate_risk + climi + pub_op_climate + pib_percap, data = finance)
+
+# Interação entre per capita e climi
+logitmfx(adap ~ climate_risk + climi + pub_op_climate + pib_percap + 
+           climi*pib_percap,  data = finance)
+
+# Diagnósticos
+# Linearidade
 logit <- glm(adap ~ climate_risk + climi + pub_op_climate, 
              family = binomial)
 
-summary(logit)
+probabilities <- predict(logit, type = "response")
+predicted.classes <- ifelse(probabilities > 0.5, "pos", "neg")
+head(predicted.classes)
 
-logitIT <- glm(adap ~ climate_risk + climi + pub_op_climate +
-              (climate_risk*climi),
-              family = binomial)
+# Predictors
+mydata <- finance %>%
+  dplyr::select_if(is.numeric) 
+predictors <- colnames(mydata)
 
-summary(logitIT)
+# Dados para plot
+mydata <- mydata %>%
+  mutate(logit = log(probabilities/(1-probabilities))) %>%
+  gather(key = "predictors", value = "predictor.value", -logit)
 
-# Resíduos
-par(mfrow=c(2,1))
-plot(logit, 2)
-plot(logitIT, 2)
+ggplot(mydata, aes(logit, predictor.value))+
+  geom_point(size = 0.5, alpha = 0.5) +
+  geom_smooth(method = "loess") + 
+  theme_bw() + 
+  facet_wrap(~predictors, scales = "free_y")
 
-# Autocorrelacao e Heterocedasticidade
-library(lmtest)
-library(car)
-bptest(logitIT)
-dwtest(logitIT)
-bgtest(logitIT)
+# Valores influentes
+plot(logit, which = 4, id.n = 3)
+# Resíduos padrão e distância de Cook
+model.data <- augment(logit) %>% 
+  mutate(index = 1:n())
+model.data %>% top_n(3, .cooksd)
 
-# Estimacao Robusta
-library(sandwich)
-coeftest(logitIT, 
-         vcov = vcovHC(logitIT, type = "HC3"))
+#plot
+ggplot(model.data, aes(index, .std.resid)) + 
+  geom_point(aes(color = adap), alpha = .5) +
+  theme_bw()
